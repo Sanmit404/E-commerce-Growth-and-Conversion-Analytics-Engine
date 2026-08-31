@@ -1,0 +1,190 @@
+// DAX measures for the GA4 growth report.
+// Paste these into a table called _Measures in Power BI Desktop.
+// The definitions match src/ga4_growth/metrics.py so the report and the
+// notebooks cannot disagree.
+
+// ---------------------------------------------------------------- base counts
+
+Sessions = SUM ( fct_funnel_daily_segments[sessions] )
+
+Product View Sessions = SUM ( fct_funnel_daily_segments[viewed_product] )
+
+Cart Sessions = SUM ( fct_funnel_daily_segments[added_to_cart] )
+
+Checkout Sessions = SUM ( fct_funnel_daily_segments[began_checkout] )
+
+Shipping Sessions = SUM ( fct_funnel_daily_segments[added_shipping] )
+
+Payment Sessions = SUM ( fct_funnel_daily_segments[added_payment] )
+
+Purchase Sessions = SUM ( fct_funnel_daily_segments[purchased] )
+
+Orders = COUNTROWS ( fct_orders )
+
+Revenue = SUM ( fct_orders[order_value] )
+
+Items Sold = SUM ( fct_orders[item_count] )
+
+Customers = DISTINCTCOUNT ( fct_orders[user_id] )
+
+// ----------------------------------------------------------------- step rates
+// DIVIDE is used everywhere instead of / so an empty slicer gives a blank
+// rather than an error.
+
+Product View Rate = DIVIDE ( [Product View Sessions], [Sessions] )
+
+View To Cart Rate = DIVIDE ( [Cart Sessions], [Product View Sessions] )
+
+Cart To Checkout Rate = DIVIDE ( [Checkout Sessions], [Cart Sessions] )
+
+Checkout To Shipping Rate = DIVIDE ( [Shipping Sessions], [Checkout Sessions] )
+
+Shipping To Payment Rate = DIVIDE ( [Payment Sessions], [Shipping Sessions] )
+
+Payment To Purchase Rate = DIVIDE ( [Purchase Sessions], [Payment Sessions] )
+
+Checkout To Purchase Rate = DIVIDE ( [Purchase Sessions], [Checkout Sessions] )
+
+Session Conversion Rate = DIVIDE ( [Purchase Sessions], [Sessions] )
+
+Cart Abandonment Rate = 1 - [Cart To Checkout Rate]
+
+Checkout Abandonment Rate = 1 - [Checkout To Purchase Rate]
+
+// ------------------------------------------------------------------ value
+
+Average Order Value = DIVIDE ( [Revenue], [Orders] )
+
+Revenue Per Session = DIVIDE ( [Revenue], [Sessions] )
+
+Items Per Order = DIVIDE ( [Items Sold], [Orders] )
+
+Repeat Orders =
+CALCULATE ( [Orders], fct_orders[order_seq] > 1 )
+
+Repeat Revenue =
+CALCULATE ( [Revenue], fct_orders[order_seq] > 1 )
+
+Repeat Revenue Share = DIVIDE ( [Repeat Revenue], [Revenue] )
+
+Repeat Customers =
+CALCULATE ( DISTINCTCOUNT ( fct_orders[user_id] ), fct_orders[order_seq] > 1 )
+
+Repeat Purchase Rate = DIVIDE ( [Repeat Customers], [Customers] )
+
+// -------------------------------------------------------------- funnel visual
+// One measure per step so a single funnel visual can read them in order.
+// Counts are cumulative, matching the session funnel in the notebooks.
+
+Funnel Step Value =
+VAR Step = SELECTEDVALUE ( dim_funnel_step[step] )
+RETURN
+    SWITCH (
+        Step,
+        "1 Session", [Sessions],
+        "2 Product view", [Product View Sessions],
+        "3 Add to cart", [Cart Sessions],
+        "4 Begin checkout", [Checkout Sessions],
+        "5 Shipping info", [Shipping Sessions],
+        "6 Payment info", [Payment Sessions],
+        "7 Purchase", [Purchase Sessions]
+    )
+
+// dim_funnel_step is a small entered-data table with one text column called
+// step holding the seven values above, sorted by a step_order column.
+
+Funnel Step Conversion =
+VAR ThisStep = [Funnel Step Value]
+VAR Order = SELECTEDVALUE ( dim_funnel_step[step_order] )
+VAR PreviousStep =
+    CALCULATE (
+        [Funnel Step Value],
+        FILTER ( ALL ( dim_funnel_step ), dim_funnel_step[step_order] = Order - 1 )
+    )
+RETURN
+    DIVIDE ( ThisStep, PreviousStep )
+
+Funnel Cumulative Conversion = DIVIDE ( [Funnel Step Value], [Sessions] )
+
+// -------------------------------------------------------------------- trends
+
+Sessions 7d Average =
+AVERAGEX (
+    DATESINPERIOD ( dim_date[Date], MAX ( dim_date[Date] ), -7, DAY ),
+    [Sessions]
+)
+
+Revenue 7d Average =
+AVERAGEX (
+    DATESINPERIOD ( dim_date[Date], MAX ( dim_date[Date] ), -7, DAY ),
+    [Revenue]
+)
+
+Revenue Previous Week =
+CALCULATE ( [Revenue], DATEADD ( dim_date[Date], -7, DAY ) )
+
+Revenue WoW Growth =
+DIVIDE ( [Revenue] - [Revenue Previous Week], [Revenue Previous Week] )
+
+// -------------------------------------------------------------- segment gaps
+// Used on the funnel page to show how far a slicer selection sits from the
+// site as a whole, which is what makes a weak segment obvious.
+
+Session Conversion All Segments =
+CALCULATE (
+    [Session Conversion Rate],
+    REMOVEFILTERS ( fct_funnel_daily_segments[device_category] ),
+    REMOVEFILTERS ( fct_funnel_daily_segments[channel_group] ),
+    REMOVEFILTERS ( fct_funnel_daily_segments[country] ),
+    REMOVEFILTERS ( fct_funnel_daily_segments[user_type] )
+)
+
+Session Conversion Gap = [Session Conversion Rate] - [Session Conversion All Segments]
+
+// ------------------------------------------------------------------ cohorts
+
+Cohort Users = SUM ( fct_cohort_retention[cohort_users] )
+
+Cohort Active Users = SUM ( fct_cohort_retention[active_users] )
+
+Cohort Retention Rate = DIVIDE ( [Cohort Active Users], [Cohort Users] )
+
+Cohort Revenue Per User =
+DIVIDE ( SUM ( fct_cohort_retention[revenue] ), [Cohort Users] )
+
+// Young cohorts have no data past their last observed week. Blanking those
+// cells stops the matrix from showing a fake zero.
+Cohort Retention Shown =
+IF (
+    SELECTEDVALUE ( fct_cohort_retention[week_index] )
+        <= MAX ( fct_cohort_retention[weeks_observed] ),
+    [Cohort Retention Rate]
+)
+
+// ----------------------------------------------------------------- products
+
+Product Revenue = SUM ( fct_product_performance[revenue] )
+
+Product Sessions Viewed = SUM ( fct_product_performance[sessions_viewed] )
+
+Product View To Cart = DIVIDE (
+    SUM ( fct_product_performance[sessions_added] ),
+    [Product Sessions Viewed]
+)
+
+Revenue Per View Session = DIVIDE ( [Product Revenue], [Product Sessions Viewed] )
+
+Revenue Rank = RANKX ( ALLSELECTED ( fct_product_performance[product_name] ), [Product Revenue] )
+
+Cumulative Revenue Share =
+VAR ThisRank = [Revenue Rank]
+VAR RunningTotal =
+    SUMX (
+        FILTER (
+            ALLSELECTED ( fct_product_performance[product_name] ),
+            [Revenue Rank] <= ThisRank
+        ),
+        [Product Revenue]
+    )
+RETURN
+    DIVIDE ( RunningTotal, CALCULATE ( [Product Revenue], ALLSELECTED () ) )
