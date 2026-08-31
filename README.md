@@ -172,3 +172,4 @@ Effect size is reported next to every p value. The chi square on device against
 funnel step gives p = 7.9e-112 and Cramer's V = 0.035, which is a very weak
 association on a very large sample. The p value is not the interesting number.
 # E-commerce-Growth-and-Conversion-Analytics-Engine
+# E-commerce-Growth-and-Conversion-Analytics-Engine
